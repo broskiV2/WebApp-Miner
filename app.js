@@ -2,8 +2,8 @@
 let tg = window.Telegram.WebApp;
 tg.expand();
 
-// URL de l'API backend (à remplacer par l'URL de votre backend sur Render)
-const API_URL = 'https://votre-app.onrender.com';
+// URL de l'API backend sur Render
+const API_URL = 'https://webapp-miner.onrender.com';
 
 function updateBalance() {
     fetch(`${API_URL}/api/balance`)
