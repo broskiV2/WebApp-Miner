@@ -33,11 +33,11 @@ app = Flask(__name__)
 CORS(app)  # Activation de CORS pour permettre les requêtes depuis GitHub Pages
 
 # Configuration du request pour le bot avec un pool plus grand
-request = HTTPXRequest(connection_pool_size=8)
+request_handler = HTTPXRequest(connection_pool_size=8)
 
 # Initialisation du bot Telegram avec le request configuré
-bot = Bot(token=TOKEN, request=request)
-telegram_app = Application.builder().token(TOKEN).request=request.build()
+bot = Bot(token=TOKEN, request=request_handler)
+telegram_app = Application.builder().token(TOKEN).request(request_handler).build()
 
 # Commandes du bot Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
