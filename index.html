@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WeMine - USDT Miner</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h2 style="text-align: center;">USDT Miner</h2>
+            <div class="balance">0.00000000</div>
+            <p style="text-align: center;">USDT Miner Total Pull</p>
+            <div class="progress-bar">
+                <div class="progress" id="progressBar"></div>
+            </div>
+            <div class="rate">0.01000000 USDT/d</div>
+        </div>
+        
+        <button class="button" onclick="startMining()">Start Mining</button>
+        
+        <div class="stats">
+            <div class="card" style="flex: 1; margin: 5px;">
+                <h3>Total Mined</h3>
+                <p id="totalMined">0.00000000</p>
+            </div>
+            <div class="card" style="flex: 1; margin: 5px;">
+                <h3>Mining Rate</h3>
+                <p id="miningRate">0.01000000/day</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html> 
