@@ -62,22 +62,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         logger.info(f"Commande /start reçue de {user.id} ({user.first_name})")
         
-        # Création ou mise à jour de l'utilisateur dans la base de données
-        db_user = User.query.filter_by(telegram_id=user.id).first()
-        if not db_user:
-            db_user = User(
-                telegram_id=user.id,
-                username=user.username,
-                first_name=user.first_name
-            )
-            db.session.add(db_user)
-            db.session.commit()
-        
         keyboard = [[KeyboardButton(
             text="Ouvrir le Miner",
             web_app=WebAppInfo(url=WEBAPP_URL)
         )]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
+        # Création ou mise à jour de l'utilisateur dans la base de données
+        try:
+            with app.app_context():
+                db_user = User.query.filter_by(telegram_id=user.id).first()
+                if not db_user:
+                    db_user = User(
+                        telegram_id=user.id,
+                        username=user.username,
+                        first_name=user.first_name
+                    )
+                    db.session.add(db_user)
+                    db.session.commit()
+                    logger.info(f"Nouvel utilisateur créé: {user.id}")
+        except Exception as db_error:
+            logger.error(f"Erreur base de données: {str(db_error)}")
+            # On continue même si la BD échoue pour au moins montrer le bouton
         
         await update.message.reply_text(
             f"Bienvenue {user.first_name} sur WeMine! Cliquez sur le bouton ci-dessous pour commencer:",
@@ -86,7 +92,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("Message de bienvenue envoyé avec succès")
     except Exception as e:
         logger.error(f"Erreur lors de la commande start: {str(e)}")
-        raise
+        # En cas d'erreur, on essaie quand même d'envoyer un message basique
+        try:
+            await update.message.reply_text(
+                "Bienvenue sur WeMine! Cliquez sur le bouton ci-dessous pour commencer:",
+                reply_markup=ReplyKeyboardMarkup([[KeyboardButton(
+                    text="Ouvrir le Miner",
+                    web_app=WebAppInfo(url=WEBAPP_URL)
+                )]], resize_keyboard=True)
+            )
+        except Exception as msg_error:
+            logger.error(f"Erreur lors de l'envoi du message de secours: {str(msg_error)}")
 
 # Ajout des handlers
 telegram_app.add_handler(CommandHandler("start", start))
@@ -366,20 +382,23 @@ def home():
 
 # Initialisation de la base de données
 def init_db():
-    with app.app_context():
-        db.create_all()
-        
-        # Ajout des plans par défaut s'ils n'existent pas
-        if MiningPlan.query.count() == 0:
-            for plan_data in default_plans:
-                plan = MiningPlan(**plan_data)
-                db.session.add(plan)
-            db.session.commit()
+    try:
+        with app.app_context():
+            db.create_all()
+            
+            # Ajout des plans par défaut s'ils n'existent pas
+            if MiningPlan.query.count() == 0:
+                for plan_data in default_plans:
+                    plan = MiningPlan(**plan_data)
+                    db.session.add(plan)
+                db.session.commit()
+                logger.info("Plans de minage par défaut créés avec succès")
+    except Exception as e:
+        logger.error(f"Erreur lors de l'initialisation de la base de données: {str(e)}")
+
+# Initialiser la base de données au démarrage
+init_db()
 
 if __name__ == '__main__':
-    # Initialisation de la base de données
-    init_db()
-    
-    # Démarrage du serveur Flask
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port) 
