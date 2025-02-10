@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from dotenv import load_dotenv
 from flask import Flask, jsonify
 from flask_cors import CORS
@@ -27,13 +28,12 @@ else:
 
 # Variable globale pour l'application Telegram
 telegram_app = None
-bot_thread = None
 
 # Initialisation de Flask
 app = Flask(__name__)
 CORS(app)  # Activation de CORS pour permettre les requêtes depuis GitHub Pages
 
-def start_telegram_bot():
+async def start_telegram_bot():
     """Démarrage du bot Telegram"""
     try:
         global telegram_app
@@ -42,7 +42,9 @@ def start_telegram_bot():
             telegram_app = Application.builder().token(TOKEN).build()
             telegram_app.add_handler(CommandHandler("start", start))
             logger.info("Bot configuré, démarrage du polling...")
-            telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
+            await telegram_app.initialize()
+            await telegram_app.start()
+            await telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
     except Exception as e:
         logger.error(f"Erreur lors du démarrage du bot: {str(e)}")
         raise
@@ -89,27 +91,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def start_bot_endpoint():
     """Endpoint pour démarrer manuellement le bot"""
     try:
-        global bot_thread
-        if bot_thread is None or not bot_thread.is_alive():
-            logger.info("Démarrage manuel du bot...")
-            bot_thread = Thread(target=start_telegram_bot)
-            bot_thread.daemon = True
-            bot_thread.start()
-            return jsonify({"status": "Bot started", "success": True})
-        return jsonify({"status": "Bot already running", "success": True})
+        logger.info("Démarrage manuel du bot...")
+        asyncio.run(start_telegram_bot())
+        return jsonify({"status": "Bot started", "success": True})
     except Exception as e:
         logger.error(f"Erreur lors du démarrage manuel du bot: {str(e)}")
         return jsonify({"status": "Error starting bot", "error": str(e), "success": False})
 
 def create_app():
     try:
-        # Démarrage du bot dans un thread
-        global bot_thread
-        if bot_thread is None:
-            logger.info("Démarrage automatique du bot...")
-            bot_thread = Thread(target=start_telegram_bot)
-            bot_thread.daemon = True
-            bot_thread.start()
+        # Démarrage du bot
+        logger.info("Démarrage automatique du bot...")
+        asyncio.run(start_telegram_bot())
     except Exception as e:
         logger.error(f"Erreur lors de la création de l'application: {str(e)}")
     return app
