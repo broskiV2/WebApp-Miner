@@ -8,6 +8,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.request import HTTPXRequest
 import json
 import asyncio
+from functools import wraps
 
 # Configuration des logs
 logging.basicConfig(
@@ -28,6 +29,13 @@ if not TOKEN:
 else:
     logger.info(f"Token trouvé: {TOKEN[:5]}...")
 
+# Configuration de la boucle d'événements
+try:
+    loop = asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
 # Initialisation de Flask
 app = Flask(__name__)
 CORS(app)  # Activation de CORS pour permettre les requêtes depuis GitHub Pages
@@ -38,6 +46,12 @@ request_handler = HTTPXRequest(connection_pool_size=8)
 # Initialisation du bot Telegram avec le request configuré
 bot = Bot(token=TOKEN, request=request_handler)
 telegram_app = Application.builder().token(TOKEN).request(request_handler).build()
+
+def async_route(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        return asyncio.get_event_loop().run_until_complete(f(*args, **kwargs))
+    return decorated_function
 
 # Commandes du bot Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -66,6 +80,7 @@ telegram_app.add_handler(CommandHandler("start", start))
 
 # Route pour le webhook Telegram
 @app.route(f'/webhook/{TOKEN}', methods=['POST'])
+@async_route
 async def webhook():
     """Endpoint pour recevoir les mises à jour de Telegram"""
     try:
@@ -83,6 +98,7 @@ async def webhook():
 
 # Route pour configurer le webhook
 @app.route('/set-webhook')
+@async_route
 async def set_webhook():
     """Configure le webhook pour le bot"""
     try:
@@ -111,6 +127,7 @@ async def set_webhook():
 
 # Route pour vérifier le statut du bot
 @app.route('/bot-info')
+@async_route
 async def bot_info():
     """Vérifie le statut du bot"""
     try:
@@ -134,6 +151,7 @@ async def bot_info():
 
 # Route pour réinitialiser le webhook
 @app.route('/reset-webhook')
+@async_route
 async def reset_webhook():
     """Réinitialise complètement le webhook"""
     try:
