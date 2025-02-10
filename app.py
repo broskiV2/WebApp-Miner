@@ -9,6 +9,8 @@ from telegram.request import HTTPXRequest
 import json
 import asyncio
 from functools import wraps
+from datetime import datetime, timedelta
+from models import db, User, MiningPlan, Transaction, MiningStats, default_plans
 
 # Configuration des logs
 logging.basicConfig(
@@ -22,12 +24,7 @@ load_dotenv()
 TOKEN = os.getenv('TELEGRAM_TOKEN')
 WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://broskiv2.github.io/WebApp-Miner')
 BASE_URL = os.getenv('BASE_URL', 'https://webapp-miner.onrender.com')
-
-# Vérification du token
-if not TOKEN:
-    logger.error("TELEGRAM_TOKEN n'est pas défini!")
-else:
-    logger.info(f"Token trouvé: {TOKEN[:5]}...")
+DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///app.db')
 
 # Configuration de la boucle d'événements
 try:
@@ -39,6 +36,11 @@ except RuntimeError:
 # Initialisation de Flask
 app = Flask(__name__)
 CORS(app)  # Activation de CORS pour permettre les requêtes depuis GitHub Pages
+
+# Configuration de la base de données
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db.init_app(app)
 
 # Configuration du request pour le bot avec un pool plus grand
 request_handler = HTTPXRequest(connection_pool_size=8)
@@ -59,6 +61,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
         logger.info(f"Commande /start reçue de {user.id} ({user.first_name})")
+        
+        # Création ou mise à jour de l'utilisateur dans la base de données
+        db_user = User.query.filter_by(telegram_id=user.id).first()
+        if not db_user:
+            db_user = User(
+                telegram_id=user.id,
+                username=user.username,
+                first_name=user.first_name
+            )
+            db.session.add(db_user)
+            db.session.commit()
         
         keyboard = [[KeyboardButton(
             text="Ouvrir le Miner",
@@ -96,26 +109,191 @@ async def webhook():
         logger.error(f"Erreur dans le webhook: {str(e)}")
         return 'Error', 500
 
-# Route pour configurer le webhook
+# Routes API
+@app.route('/api/user/<int:telegram_id>')
+def get_user_info(telegram_id):
+    """Récupère les informations de l'utilisateur"""
+    user = User.query.filter_by(telegram_id=telegram_id).first()
+    if not user:
+        return jsonify({"error": "Utilisateur non trouvé"}), 404
+    
+    return jsonify({
+        "id": user.telegram_id,
+        "username": user.username,
+        "balance": user.balance,
+        "active_plan": user.active_plan.name if user.active_plan else None,
+        "mining_rate": user.active_plan.mining_rate if user.active_plan else 0
+    })
+
+@app.route('/api/plans')
+def get_mining_plans():
+    """Récupère la liste des plans de minage disponibles"""
+    plans = MiningPlan.query.all()
+    return jsonify([{
+        "id": plan.id,
+        "name": plan.name,
+        "description": plan.description,
+        "price": plan.price,
+        "mining_rate": plan.mining_rate,
+        "duration": plan.duration
+    } for plan in plans])
+
+@app.route('/api/transactions/<int:telegram_id>')
+def get_user_transactions(telegram_id):
+    """Récupère l'historique des transactions de l'utilisateur"""
+    user = User.query.filter_by(telegram_id=telegram_id).first()
+    if not user:
+        return jsonify({"error": "Utilisateur non trouvé"}), 404
+    
+    transactions = Transaction.query.filter_by(user_id=user.id).order_by(Transaction.created_at.desc()).all()
+    return jsonify([{
+        "type": tx.type,
+        "amount": tx.amount,
+        "status": tx.status,
+        "created_at": tx.created_at.isoformat()
+    } for tx in transactions])
+
+@app.route('/api/mining/stats/<int:telegram_id>')
+def get_mining_stats(telegram_id):
+    """Récupère les statistiques de minage de l'utilisateur"""
+    user = User.query.filter_by(telegram_id=telegram_id).first()
+    if not user:
+        return jsonify({"error": "Utilisateur non trouvé"}), 404
+    
+    active_stats = MiningStats.query.filter_by(user_id=user.id, is_active=True).first()
+    if not active_stats:
+        return jsonify({
+            "is_mining": False,
+            "total_mined": 0,
+            "mining_rate": 0,
+            "time_remaining": 0
+        })
+    
+    time_remaining = (active_stats.end_date - datetime.utcnow()).days
+    return jsonify({
+        "is_mining": True,
+        "total_mined": active_stats.total_mined,
+        "mining_rate": active_stats.mining_rate,
+        "time_remaining": max(0, time_remaining)
+    })
+
+@app.route('/api/mining/start', methods=['POST'])
+def start_mining():
+    """Démarre le minage pour un utilisateur"""
+    data = request.get_json()
+    telegram_id = data.get('telegram_id')
+    plan_id = data.get('plan_id')
+    
+    user = User.query.filter_by(telegram_id=telegram_id).first()
+    if not user:
+        return jsonify({"error": "Utilisateur non trouvé"}), 404
+    
+    plan = MiningPlan.query.get(plan_id)
+    if not plan:
+        return jsonify({"error": "Plan non trouvé"}), 404
+    
+    if user.balance < plan.price:
+        return jsonify({"error": "Solde insuffisant"}), 400
+    
+    # Déduire le coût du plan
+    user.balance -= plan.price
+    user.active_plan_id = plan.id
+    user.plan_activation_date = datetime.utcnow()
+    
+    # Créer les statistiques de minage
+    stats = MiningStats(
+        user_id=user.id,
+        plan_id=plan.id,
+        mining_rate=plan.mining_rate,
+        start_date=datetime.utcnow(),
+        end_date=datetime.utcnow() + timedelta(days=plan.duration)
+    )
+    
+    # Enregistrer la transaction
+    transaction = Transaction(
+        user_id=user.id,
+        type='mining_activation',
+        amount=-plan.price,
+        status='completed'
+    )
+    
+    db.session.add(stats)
+    db.session.add(transaction)
+    db.session.commit()
+    
+    return jsonify({"success": True, "message": "Minage démarré avec succès"})
+
+@app.route('/api/deposit', methods=['POST'])
+def deposit():
+    """Traite un dépôt"""
+    data = request.get_json()
+    telegram_id = data.get('telegram_id')
+    amount = data.get('amount')
+    tx_hash = data.get('tx_hash')
+    
+    user = User.query.filter_by(telegram_id=telegram_id).first()
+    if not user:
+        return jsonify({"error": "Utilisateur non trouvé"}), 404
+    
+    transaction = Transaction(
+        user_id=user.id,
+        type='deposit',
+        amount=amount,
+        status='pending',
+        tx_hash=tx_hash
+    )
+    
+    db.session.add(transaction)
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "message": "Dépôt en attente de confirmation",
+        "transaction_id": transaction.id
+    })
+
+@app.route('/api/withdraw', methods=['POST'])
+def withdraw():
+    """Traite un retrait"""
+    data = request.get_json()
+    telegram_id = data.get('telegram_id')
+    amount = data.get('amount')
+    address = data.get('address')
+    
+    user = User.query.filter_by(telegram_id=telegram_id).first()
+    if not user:
+        return jsonify({"error": "Utilisateur non trouvé"}), 404
+    
+    if user.balance < amount:
+        return jsonify({"error": "Solde insuffisant"}), 400
+    
+    transaction = Transaction(
+        user_id=user.id,
+        type='withdrawal',
+        amount=-amount,
+        status='pending'
+    )
+    
+    user.balance -= amount
+    db.session.add(transaction)
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "message": "Retrait en cours de traitement",
+        "transaction_id": transaction.id
+    })
+
+# Routes existantes pour le webhook
 @app.route('/set-webhook')
 @async_route
 async def set_webhook():
     """Configure le webhook pour le bot"""
     try:
         webhook_url = f"{BASE_URL}/webhook/{TOKEN}"
-        
-        # Suppression de l'ancien webhook
         await bot.delete_webhook()
-        logger.info("Ancien webhook supprimé")
-        
-        # Configuration du nouveau webhook
         await bot.set_webhook(webhook_url)
-        logger.info(f"Nouveau webhook configuré sur {webhook_url}")
-        
-        # Vérification de la configuration
         webhook_info = await bot.get_webhook_info()
-        logger.info(f"Information du webhook: {webhook_info.to_dict()}")
-        
         return jsonify({
             "status": "Webhook set",
             "url": webhook_url,
@@ -125,7 +303,6 @@ async def set_webhook():
         logger.error(f"Erreur lors de la configuration du webhook: {str(e)}")
         return jsonify({"status": "Error", "error": str(e)}), 500
 
-# Route pour vérifier le statut du bot
 @app.route('/bot-info')
 @async_route
 async def bot_info():
@@ -149,27 +326,16 @@ async def bot_info():
         logger.error(f"Erreur lors de la vérification du bot: {str(e)}")
         return jsonify({"status": "Error", "error": str(e)}), 500
 
-# Route pour réinitialiser le webhook
 @app.route('/reset-webhook')
 @async_route
 async def reset_webhook():
     """Réinitialise complètement le webhook"""
     try:
-        # Suppression du webhook existant
         await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook supprimé avec succès")
-        
-        # Attente de 2 secondes
         await asyncio.sleep(2)
-        
-        # Configuration du nouveau webhook
         webhook_url = f"{BASE_URL}/webhook/{TOKEN}"
         await bot.set_webhook(webhook_url)
-        logger.info(f"Nouveau webhook configuré sur {webhook_url}")
-        
-        # Vérification
         webhook_info = await bot.get_webhook_info()
-        
         return jsonify({
             "status": "Webhook reset successful",
             "webhook_info": webhook_info.to_dict()
@@ -178,7 +344,6 @@ async def reset_webhook():
         logger.error(f"Erreur lors de la réinitialisation du webhook: {str(e)}")
         return jsonify({"status": "Error", "error": str(e)}), 500
 
-# Route API pour le solde
 @app.route('/')
 def home():
     return jsonify({
@@ -187,19 +352,34 @@ def home():
             "webhook_setup": f"{BASE_URL}/set-webhook",
             "webhook_reset": f"{BASE_URL}/reset-webhook",
             "bot_info": f"{BASE_URL}/bot-info",
-            "balance_api": f"{BASE_URL}/api/balance"
+            "api": {
+                "user": "/api/user/<telegram_id>",
+                "plans": "/api/plans",
+                "transactions": "/api/transactions/<telegram_id>",
+                "mining_stats": "/api/mining/stats/<telegram_id>",
+                "mining_start": "/api/mining/start",
+                "deposit": "/api/deposit",
+                "withdraw": "/api/withdraw"
+            }
         }
     })
 
-@app.route('/api/balance')
-def get_balance():
-    return jsonify({
-        'balance': 0.00000000,
-        'total_pull': 50000,
-        'rate': 0.01000000
-    })
+# Initialisation de la base de données
+def init_db():
+    with app.app_context():
+        db.create_all()
+        
+        # Ajout des plans par défaut s'ils n'existent pas
+        if MiningPlan.query.count() == 0:
+            for plan_data in default_plans:
+                plan = MiningPlan(**plan_data)
+                db.session.add(plan)
+            db.session.commit()
 
 if __name__ == '__main__':
+    # Initialisation de la base de données
+    init_db()
+    
     # Démarrage du serveur Flask
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port) 

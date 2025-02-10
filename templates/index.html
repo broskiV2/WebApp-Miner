@@ -59,10 +59,71 @@
             margin: 10px 0;
             cursor: pointer;
         }
+        .button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
         .stats {
             display: flex;
             justify-content: space-around;
             margin-top: 20px;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .tab {
+            flex: 1;
+            padding: 10px;
+            text-align: center;
+            background-color: #333;
+            cursor: pointer;
+        }
+        .tab.active {
+            background-color: #4CAF50;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .plan-card {
+            border: 1px solid #444;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+            cursor: pointer;
+        }
+        .plan-card:hover {
+            border-color: #4CAF50;
+        }
+        .plan-card.selected {
+            border-color: #4CAF50;
+            background-color: rgba(76, 175, 80, 0.1);
+        }
+        .transaction-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .transaction-item {
+            padding: 10px;
+            border-bottom: 1px solid #333;
+        }
+        .transaction-item:last-child {
+            border-bottom: none;
+        }
+        .input-group {
+            margin: 15px 0;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            background-color: #333;
+            border: 1px solid #444;
+            border-radius: 5px;
+            color: white;
+            margin-top: 5px;
         }
     </style>
 </head>
@@ -70,24 +131,65 @@
     <div class="container">
         <div class="card">
             <h2 style="text-align: center;">USDT Miner</h2>
-            <div class="balance">0.00000000</div>
-            <p style="text-align: center;">USDT Miner Total Pull</p>
-            <div class="progress-bar">
-                <div class="progress" id="progressBar"></div>
+            <div class="balance" id="userBalance">0.00000000</div>
+            <div class="stats">
+                <div style="text-align: center;">
+                    <p>Taux de minage</p>
+                    <div class="rate" id="miningRate">0.00000000 USDT/jour</div>
+                </div>
+                <div style="text-align: center;">
+                    <p>Temps restant</p>
+                    <div id="timeRemaining">0 jours</div>
+                </div>
             </div>
-            <div class="rate">0.01000000 USDT/d</div>
         </div>
         
-        <button class="button" onclick="startMining()">Start Mining</button>
+        <div class="tabs">
+            <div class="tab active" onclick="showTab('mining')">Minage</div>
+            <div class="tab" onclick="showTab('deposit')">Dépôt</div>
+            <div class="tab" onclick="showTab('withdraw')">Retrait</div>
+            <div class="tab" onclick="showTab('history')">Historique</div>
+        </div>
         
-        <div class="stats">
-            <div class="card" style="flex: 1; margin: 5px;">
-                <h3>Total Mined</h3>
-                <p id="totalMined">0.00000000</p>
+        <div id="mining" class="tab-content active">
+            <div id="plans-container">
+                <!-- Les plans seront ajoutés ici dynamiquement -->
             </div>
-            <div class="card" style="flex: 1; margin: 5px;">
-                <h3>Mining Rate</h3>
-                <p id="miningRate">0.01000000/day</p>
+            <button class="button" onclick="startMining()" id="startMiningBtn">Commencer le minage</button>
+        </div>
+        
+        <div id="deposit" class="tab-content">
+            <div class="card">
+                <h3>Déposer des USDT</h3>
+                <div class="input-group">
+                    <label for="depositAmount">Montant (USDT)</label>
+                    <input type="number" id="depositAmount" min="10" step="1" placeholder="Minimum 10 USDT">
+                </div>
+                <button class="button" onclick="deposit()">Déposer</button>
+            </div>
+        </div>
+        
+        <div id="withdraw" class="tab-content">
+            <div class="card">
+                <h3>Retirer des USDT</h3>
+                <div class="input-group">
+                    <label for="withdrawAmount">Montant (USDT)</label>
+                    <input type="number" id="withdrawAmount" min="10" step="1" placeholder="Minimum 10 USDT">
+                </div>
+                <div class="input-group">
+                    <label for="withdrawAddress">Adresse USDT (TRC20)</label>
+                    <input type="text" id="withdrawAddress" placeholder="Adresse USDT TRC20">
+                </div>
+                <button class="button" onclick="withdraw()">Retirer</button>
+            </div>
+        </div>
+        
+        <div id="history" class="tab-content">
+            <div class="card">
+                <h3>Historique des transactions</h3>
+                <div class="transaction-list" id="transactionList">
+                    <!-- L'historique sera ajouté ici dynamiquement -->
+                </div>
             </div>
         </div>
     </div>
@@ -96,24 +198,220 @@
         let tg = window.Telegram.WebApp;
         tg.expand();
         
-        function updateBalance() {
-            fetch('/api/balance')
-                .then(response => response.json())
-                .then(data => {
-                    document.querySelector('.balance').textContent = data.balance.toFixed(8);
-                    const progress = (data.balance / data.total_pull) * 100;
-                    document.getElementById('progressBar').style.width = `${progress}%`;
-                    document.getElementById('miningRate').textContent = `${data.rate.toFixed(8)}/day`;
+        let selectedPlan = null;
+        let userData = null;
+        const API_URL = 'https://webapp-miner.onrender.com';
+        
+        // Initialisation
+        async function initialize() {
+            try {
+                // Récupérer les informations de l'utilisateur
+                const userResponse = await fetch(`${API_URL}/api/user/${tg.initDataUnsafe.user.id}`);
+                userData = await userResponse.json();
+                updateUserInterface();
+                
+                // Charger les plans
+                const plansResponse = await fetch(`${API_URL}/api/plans`);
+                const plans = await plansResponse.json();
+                displayPlans(plans);
+                
+                // Charger l'historique
+                loadTransactions();
+                
+                // Mettre à jour les statistiques
+                updateMiningStats();
+            } catch (error) {
+                console.error('Erreur lors de l\'initialisation:', error);
+                tg.showAlert('Erreur lors du chargement des données. Réessayez plus tard.');
+            }
+        }
+        
+        function updateUserInterface() {
+            document.getElementById('userBalance').textContent = userData.balance.toFixed(8);
+            document.getElementById('miningRate').textContent = `${userData.mining_rate.toFixed(8)} USDT/jour`;
+        }
+        
+        function displayPlans(plans) {
+            const container = document.getElementById('plans-container');
+            container.innerHTML = plans.map(plan => `
+                <div class="plan-card" onclick="selectPlan(${plan.id})" data-plan-id="${plan.id}">
+                    <h3>${plan.name}</h3>
+                    <p>${plan.description}</p>
+                    <p>Prix: ${plan.price} USDT</p>
+                    <p>Taux de minage: ${plan.mining_rate} USDT/jour</p>
+                    <p>Durée: ${plan.duration} jours</p>
+                </div>
+            `).join('');
+        }
+        
+        function selectPlan(planId) {
+            selectedPlan = planId;
+            document.querySelectorAll('.plan-card').forEach(card => {
+                card.classList.remove('selected');
+                if (card.dataset.planId == planId) {
+                    card.classList.add('selected');
+                }
+            });
+        }
+        
+        async function startMining() {
+            if (!selectedPlan) {
+                tg.showAlert('Veuillez sélectionner un plan de minage');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/api/mining/start`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        telegram_id: tg.initDataUnsafe.user.id,
+                        plan_id: selectedPlan
+                    })
                 });
+                
+                const result = await response.json();
+                if (result.success) {
+                    tg.showAlert('Minage démarré avec succès!');
+                    initialize();  // Rafraîchir l'interface
+                } else {
+                    tg.showAlert(result.error || 'Erreur lors du démarrage du minage');
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+                tg.showAlert('Erreur lors du démarrage du minage');
+            }
         }
-
-        function startMining() {
-            tg.showAlert('Mining started! Check back later for your rewards.');
+        
+        async function deposit() {
+            const amount = document.getElementById('depositAmount').value;
+            if (!amount || amount < 10) {
+                tg.showAlert('Le montant minimum de dépôt est de 10 USDT');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/api/deposit`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        telegram_id: tg.initDataUnsafe.user.id,
+                        amount: parseFloat(amount)
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    tg.showAlert('Dépôt initié avec succès! Veuillez patienter pour la confirmation.');
+                    document.getElementById('depositAmount').value = '';
+                } else {
+                    tg.showAlert(result.error || 'Erreur lors du dépôt');
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+                tg.showAlert('Erreur lors du dépôt');
+            }
         }
-
-        // Update balance every 5 seconds
-        setInterval(updateBalance, 5000);
-        updateBalance();
+        
+        async function withdraw() {
+            const amount = document.getElementById('withdrawAmount').value;
+            const address = document.getElementById('withdrawAddress').value;
+            
+            if (!amount || amount < 10) {
+                tg.showAlert('Le montant minimum de retrait est de 10 USDT');
+                return;
+            }
+            
+            if (!address) {
+                tg.showAlert('Veuillez entrer une adresse de retrait valide');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/api/withdraw`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        telegram_id: tg.initDataUnsafe.user.id,
+                        amount: parseFloat(amount),
+                        address: address
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    tg.showAlert('Retrait initié avec succès! Veuillez patienter pour le traitement.');
+                    document.getElementById('withdrawAmount').value = '';
+                    document.getElementById('withdrawAddress').value = '';
+                } else {
+                    tg.showAlert(result.error || 'Erreur lors du retrait');
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+                tg.showAlert('Erreur lors du retrait');
+            }
+        }
+        
+        async function loadTransactions() {
+            try {
+                const response = await fetch(`${API_URL}/api/transactions/${tg.initDataUnsafe.user.id}`);
+                const transactions = await response.json();
+                
+                const container = document.getElementById('transactionList');
+                container.innerHTML = transactions.map(tx => `
+                    <div class="transaction-item">
+                        <div>Type: ${tx.type}</div>
+                        <div>Montant: ${tx.amount.toFixed(8)} USDT</div>
+                        <div>Statut: ${tx.status}</div>
+                        <div>Date: ${new Date(tx.created_at).toLocaleString()}</div>
+                    </div>
+                `).join('') || '<p>Aucune transaction</p>';
+            } catch (error) {
+                console.error('Erreur lors du chargement des transactions:', error);
+            }
+        }
+        
+        async function updateMiningStats() {
+            try {
+                const response = await fetch(`${API_URL}/api/mining/stats/${tg.initDataUnsafe.user.id}`);
+                const stats = await response.json();
+                
+                document.getElementById('miningRate').textContent = `${stats.mining_rate.toFixed(8)} USDT/jour`;
+                document.getElementById('timeRemaining').textContent = `${stats.time_remaining} jours`;
+                
+                if (!stats.is_mining) {
+                    document.getElementById('startMiningBtn').disabled = false;
+                } else {
+                    document.getElementById('startMiningBtn').disabled = true;
+                }
+            } catch (error) {
+                console.error('Erreur lors de la mise à jour des statistiques:', error);
+            }
+        }
+        
+        function showTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            document.getElementById(tabId).classList.add('active');
+            document.querySelector(`.tab[onclick="showTab('${tabId}')"]`).classList.add('active');
+        }
+        
+        // Mettre à jour les statistiques toutes les 30 secondes
+        setInterval(updateMiningStats, 30000);
+        
+        // Initialiser l'application
+        initialize();
     </script>
 </body>
 </html> 
