@@ -7,6 +7,7 @@ from flask_cors import CORS
 from telegram import Update, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes
 from threading import Thread
+from functools import partial
 
 # Configuration des logs
 logging.basicConfig(
@@ -28,26 +29,43 @@ else:
 
 # Variable globale pour l'application Telegram
 telegram_app = None
+bot_task = None
 
 # Initialisation de Flask
 app = Flask(__name__)
 CORS(app)  # Activation de CORS pour permettre les requêtes depuis GitHub Pages
 
-async def start_telegram_bot():
-    """Démarrage du bot Telegram"""
+async def run_bot():
+    """Fonction pour exécuter le bot"""
+    global telegram_app
     try:
-        global telegram_app
-        if telegram_app is None:
-            logger.info("Démarrage du bot Telegram...")
-            telegram_app = Application.builder().token(TOKEN).build()
-            telegram_app.add_handler(CommandHandler("start", start))
-            logger.info("Bot configuré, démarrage du polling...")
-            await telegram_app.initialize()
-            await telegram_app.start()
-            await telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
+        telegram_app = Application.builder().token(TOKEN).build()
+        telegram_app.add_handler(CommandHandler("start", start))
+        await telegram_app.initialize()
+        await telegram_app.start()
+        await telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
     except Exception as e:
-        logger.error(f"Erreur lors du démarrage du bot: {str(e)}")
+        logger.error(f"Erreur dans run_bot: {str(e)}")
         raise
+
+def run_async_bot():
+    """Fonction pour démarrer le bot dans un thread séparé"""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(run_bot())
+    except Exception as e:
+        logger.error(f"Erreur dans run_async_bot: {str(e)}")
+
+def start_bot():
+    """Démarrage du bot dans un thread"""
+    global bot_task
+    if bot_task is None or not bot_task.is_alive():
+        logger.info("Démarrage du bot Telegram...")
+        bot_task = Thread(target=run_async_bot)
+        bot_task.daemon = True
+        bot_task.start()
+        logger.info("Bot démarré avec succès")
 
 # Route API pour le solde
 @app.route('/')
@@ -91,8 +109,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def start_bot_endpoint():
     """Endpoint pour démarrer manuellement le bot"""
     try:
-        logger.info("Démarrage manuel du bot...")
-        asyncio.run(start_telegram_bot())
+        start_bot()
         return jsonify({"status": "Bot started", "success": True})
     except Exception as e:
         logger.error(f"Erreur lors du démarrage manuel du bot: {str(e)}")
@@ -101,8 +118,7 @@ def start_bot_endpoint():
 def create_app():
     try:
         # Démarrage du bot
-        logger.info("Démarrage automatique du bot...")
-        asyncio.run(start_telegram_bot())
+        start_bot()
     except Exception as e:
         logger.error(f"Erreur lors de la création de l'application: {str(e)}")
     return app
