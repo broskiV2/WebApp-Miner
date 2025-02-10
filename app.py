@@ -27,18 +27,11 @@ def start_telegram_bot():
         telegram_app.add_handler(CommandHandler("start", start))
         telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-@app.route('/start-bot')
-def start_bot():
-    """Endpoint pour démarrer le bot"""
-    global bot_thread
-    if bot_thread is None or not bot_thread.is_alive():
-        bot_thread = Thread(target=start_telegram_bot)
-        bot_thread.daemon = True
-        bot_thread.start()
-        return jsonify({"status": "Bot started"})
-    return jsonify({"status": "Bot already running"})
-
 # Route API pour le solde
+@app.route('/')
+def home():
+    return jsonify({"status": "Server is running"})
+
 @app.route('/api/balance')
 def get_balance():
     return jsonify({
@@ -59,6 +52,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Bienvenue sur WeMine! Cliquez sur le bouton ci-dessous pour commencer:",
         reply_markup=reply_markup
     )
+
+def create_app():
+    # Démarrage du bot dans un thread
+    global bot_thread
+    if bot_thread is None:
+        bot_thread = Thread(target=start_telegram_bot)
+        bot_thread.daemon = True
+        bot_thread.start()
+    return app
+
+app = create_app()
 
 if __name__ == '__main__':
     # Démarrage du serveur Flask
