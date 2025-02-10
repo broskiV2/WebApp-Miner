@@ -15,21 +15,28 @@ WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://broskiv2.github.io/WebApp-Miner')
 telegram_app = None
 bot_thread = None
 
-def start_telegram_bot():
-    """Démarrage du bot Telegram"""
-    global telegram_app
-    telegram_app = Application.builder().token(TOKEN).build()
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-# Démarrage du bot avant l'initialisation de Flask
-bot_thread = Thread(target=start_telegram_bot)
-bot_thread.daemon = True  # Le thread s'arrêtera quand le programme principal s'arrête
-bot_thread.start()
-
 # Initialisation de Flask
 app = Flask(__name__)
 CORS(app)  # Activation de CORS pour permettre les requêtes depuis GitHub Pages
+
+def start_telegram_bot():
+    """Démarrage du bot Telegram"""
+    global telegram_app
+    if telegram_app is None:
+        telegram_app = Application.builder().token(TOKEN).build()
+        telegram_app.add_handler(CommandHandler("start", start))
+        telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+@app.route('/start-bot')
+def start_bot():
+    """Endpoint pour démarrer le bot"""
+    global bot_thread
+    if bot_thread is None or not bot_thread.is_alive():
+        bot_thread = Thread(target=start_telegram_bot)
+        bot_thread.daemon = True
+        bot_thread.start()
+        return jsonify({"status": "Bot started"})
+    return jsonify({"status": "Bot already running"})
 
 # Route API pour le solde
 @app.route('/api/balance')
