@@ -49,6 +49,13 @@ request_handler = HTTPXRequest(connection_pool_size=8)
 bot = Bot(token=TOKEN, request=request_handler)
 telegram_app = Application.builder().token(TOKEN).request(request_handler).build()
 
+def with_db_context(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        with app.app_context():
+            return f(*args, **kwargs)
+    return decorated_function
+
 def async_route(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -83,7 +90,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     logger.info(f"Nouvel utilisateur créé: {user.id}")
         except Exception as db_error:
             logger.error(f"Erreur base de données: {str(db_error)}")
-            # On continue même si la BD échoue pour au moins montrer le bouton
         
         await update.message.reply_text(
             f"Bienvenue {user.first_name} sur WeMine! Cliquez sur le bouton ci-dessous pour commencer:",
@@ -92,7 +98,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("Message de bienvenue envoyé avec succès")
     except Exception as e:
         logger.error(f"Erreur lors de la commande start: {str(e)}")
-        # En cas d'erreur, on essaie quand même d'envoyer un message basique
         try:
             await update.message.reply_text(
                 "Bienvenue sur WeMine! Cliquez sur le bouton ci-dessous pour commencer:",
@@ -107,26 +112,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Ajout des handlers
 telegram_app.add_handler(CommandHandler("start", start))
 
-# Route pour le webhook Telegram
-@app.route(f'/webhook/{TOKEN}', methods=['POST'])
-@async_route
-async def webhook():
-    """Endpoint pour recevoir les mises à jour de Telegram"""
-    try:
-        logger.info("Mise à jour reçue via webhook")
-        data = request.get_json()
-        logger.info(f"Données reçues: {json.dumps(data, indent=2)}")
-        
-        update = Update.de_json(data, bot)
-        await telegram_app.initialize()
-        await telegram_app.process_update(update)
-        return 'OK'
-    except Exception as e:
-        logger.error(f"Erreur dans le webhook: {str(e)}")
-        return 'Error', 500
-
 # Routes API
 @app.route('/api/user/<int:telegram_id>')
+@with_db_context
 def get_user_info(telegram_id):
     """Récupère les informations de l'utilisateur"""
     user = User.query.filter_by(telegram_id=telegram_id).first()
@@ -142,6 +130,7 @@ def get_user_info(telegram_id):
     })
 
 @app.route('/api/plans')
+@with_db_context
 def get_mining_plans():
     """Récupère la liste des plans de minage disponibles"""
     plans = MiningPlan.query.all()
@@ -155,6 +144,7 @@ def get_mining_plans():
     } for plan in plans])
 
 @app.route('/api/transactions/<int:telegram_id>')
+@with_db_context
 def get_user_transactions(telegram_id):
     """Récupère l'historique des transactions de l'utilisateur"""
     user = User.query.filter_by(telegram_id=telegram_id).first()
@@ -170,6 +160,7 @@ def get_user_transactions(telegram_id):
     } for tx in transactions])
 
 @app.route('/api/mining/stats/<int:telegram_id>')
+@with_db_context
 def get_mining_stats(telegram_id):
     """Récupère les statistiques de minage de l'utilisateur"""
     user = User.query.filter_by(telegram_id=telegram_id).first()
@@ -194,6 +185,7 @@ def get_mining_stats(telegram_id):
     })
 
 @app.route('/api/mining/start', methods=['POST'])
+@with_db_context
 def start_mining():
     """Démarre le minage pour un utilisateur"""
     data = request.get_json()
@@ -240,6 +232,7 @@ def start_mining():
     return jsonify({"success": True, "message": "Minage démarré avec succès"})
 
 @app.route('/api/deposit', methods=['POST'])
+@with_db_context
 def deposit():
     """Traite un dépôt"""
     data = request.get_json()
@@ -269,6 +262,7 @@ def deposit():
     })
 
 @app.route('/api/withdraw', methods=['POST'])
+@with_db_context
 def withdraw():
     """Traite un retrait"""
     data = request.get_json()
@@ -300,7 +294,24 @@ def withdraw():
         "transaction_id": transaction.id
     })
 
-# Routes existantes pour le webhook
+# Routes pour le webhook
+@app.route(f'/webhook/{TOKEN}', methods=['POST'])
+@async_route
+async def webhook():
+    """Endpoint pour recevoir les mises à jour de Telegram"""
+    try:
+        logger.info("Mise à jour reçue via webhook")
+        data = request.get_json()
+        logger.info(f"Données reçues: {json.dumps(data, indent=2)}")
+        
+        update = Update.de_json(data, bot)
+        await telegram_app.initialize()
+        await telegram_app.process_update(update)
+        return 'OK'
+    except Exception as e:
+        logger.error(f"Erreur dans le webhook: {str(e)}")
+        return 'Error', 500
+
 @app.route('/set-webhook')
 @async_route
 async def set_webhook():
