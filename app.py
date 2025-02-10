@@ -3,8 +3,9 @@ import logging
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from telegram import Update, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup
+from telegram import Update, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes
+import json
 
 # Configuration des logs
 logging.basicConfig(
@@ -30,20 +31,24 @@ app = Flask(__name__)
 CORS(app)  # Activation de CORS pour permettre les requêtes depuis GitHub Pages
 
 # Initialisation du bot Telegram
+bot = Bot(token=TOKEN)
 telegram_app = Application.builder().token(TOKEN).build()
 
 # Commandes du bot Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Commande de démarrage avec bouton pour ouvrir la webapp"""
     try:
-        logger.info(f"Commande /start reçue de {update.effective_user.id}")
+        user = update.effective_user
+        logger.info(f"Commande /start reçue de {user.id} ({user.first_name})")
+        
         keyboard = [[KeyboardButton(
             text="Ouvrir le Miner",
             web_app=WebAppInfo(url=WEBAPP_URL)
         )]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
         await update.message.reply_text(
-            "Bienvenue sur WeMine! Cliquez sur le bouton ci-dessous pour commencer:",
+            f"Bienvenue {user.first_name} sur WeMine! Cliquez sur le bouton ci-dessous pour commencer:",
             reply_markup=reply_markup
         )
         logger.info("Message de bienvenue envoyé avec succès")
@@ -60,7 +65,11 @@ async def webhook():
     """Endpoint pour recevoir les mises à jour de Telegram"""
     try:
         logger.info("Mise à jour reçue via webhook")
-        update = Update.de_json(request.get_json(), telegram_app.bot)
+        data = request.get_json()
+        logger.info(f"Données reçues: {json.dumps(data, indent=2)}")
+        
+        update = Update.de_json(data, bot)
+        await telegram_app.initialize()
         await telegram_app.process_update(update)
         return 'OK'
     except Exception as e:
@@ -73,23 +82,49 @@ async def set_webhook():
     """Configure le webhook pour le bot"""
     try:
         webhook_url = f"{BASE_URL}/webhook/{TOKEN}"
-        await telegram_app.bot.delete_webhook()  # Supprime l'ancien webhook
-        await telegram_app.bot.set_webhook(webhook_url)
-        webhook_info = await telegram_app.bot.get_webhook_info()
-        logger.info(f"Webhook configuré sur {webhook_url}")
+        
+        # Suppression de l'ancien webhook
+        await bot.delete_webhook()
+        logger.info("Ancien webhook supprimé")
+        
+        # Configuration du nouveau webhook
+        await bot.set_webhook(webhook_url)
+        logger.info(f"Nouveau webhook configuré sur {webhook_url}")
+        
+        # Vérification de la configuration
+        webhook_info = await bot.get_webhook_info()
+        logger.info(f"Information du webhook: {webhook_info.to_dict()}")
+        
         return jsonify({
             "status": "Webhook set",
             "url": webhook_url,
-            "webhook_info": {
-                "url": webhook_info.url,
-                "has_custom_certificate": webhook_info.has_custom_certificate,
-                "pending_update_count": webhook_info.pending_update_count,
-                "last_error_date": webhook_info.last_error_date,
-                "last_error_message": webhook_info.last_error_message
-            }
+            "webhook_info": webhook_info.to_dict()
         })
     except Exception as e:
         logger.error(f"Erreur lors de la configuration du webhook: {str(e)}")
+        return jsonify({"status": "Error", "error": str(e)}), 500
+
+# Route pour vérifier le statut du bot
+@app.route('/bot-info')
+async def bot_info():
+    """Vérifie le statut du bot"""
+    try:
+        bot_info = await bot.get_me()
+        webhook_info = await bot.get_webhook_info()
+        return jsonify({
+            "status": "Bot is running",
+            "bot_info": {
+                "id": bot_info.id,
+                "name": bot_info.first_name,
+                "username": bot_info.username,
+                "can_join_groups": bot_info.can_join_groups,
+                "can_read_all_group_messages": bot_info.can_read_all_group_messages,
+                "supports_inline_queries": bot_info.supports_inline_queries
+            },
+            "webhook_info": webhook_info.to_dict()
+        })
+    except Exception as e:
+        logger.error(f"Erreur lors de la vérification du bot: {str(e)}")
         return jsonify({"status": "Error", "error": str(e)}), 500
 
 # Route API pour le solde
@@ -97,7 +132,11 @@ async def set_webhook():
 def home():
     return jsonify({
         "status": "Server is running",
-        "webhook_info": f"{BASE_URL}/set-webhook"
+        "endpoints": {
+            "webhook_setup": f"{BASE_URL}/set-webhook",
+            "bot_info": f"{BASE_URL}/bot-info",
+            "balance_api": f"{BASE_URL}/api/balance"
+        }
     })
 
 @app.route('/api/balance')
