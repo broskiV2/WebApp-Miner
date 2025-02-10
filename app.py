@@ -11,12 +11,25 @@ load_dotenv()
 TOKEN = os.getenv('TELEGRAM_TOKEN')
 WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://broskiv2.github.io/WebApp-Miner')
 
+# Variable globale pour l'application Telegram
+telegram_app = None
+bot_thread = None
+
+def start_telegram_bot():
+    """Démarrage du bot Telegram"""
+    global telegram_app
+    telegram_app = Application.builder().token(TOKEN).build()
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+# Démarrage du bot avant l'initialisation de Flask
+bot_thread = Thread(target=start_telegram_bot)
+bot_thread.daemon = True  # Le thread s'arrêtera quand le programme principal s'arrête
+bot_thread.start()
+
 # Initialisation de Flask
 app = Flask(__name__)
 CORS(app)  # Activation de CORS pour permettre les requêtes depuis GitHub Pages
-
-# Variable globale pour l'application Telegram
-telegram_app = None
 
 # Route API pour le solde
 @app.route('/api/balance')
@@ -39,19 +52,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Bienvenue sur WeMine! Cliquez sur le bouton ci-dessous pour commencer:",
         reply_markup=reply_markup
     )
-
-def start_telegram_bot():
-    """Démarrage du bot Telegram"""
-    global telegram_app
-    telegram_app = Application.builder().token(TOKEN).build()
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-# Démarrage du bot dans un thread au démarrage de l'application
-@app.before_first_request
-def init_bot():
-    thread = Thread(target=start_telegram_bot)
-    thread.start()
 
 if __name__ == '__main__':
     # Démarrage du serveur Flask
