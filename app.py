@@ -1,4 +1,5 @@
 import os
+import logging
 from dotenv import load_dotenv
 from flask import Flask, jsonify
 from flask_cors import CORS
@@ -6,10 +7,23 @@ from telegram import Update, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes
 from threading import Thread
 
+# Configuration des logs
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
 # Chargement des variables d'environnement
 load_dotenv()
 TOKEN = os.getenv('TELEGRAM_TOKEN')
 WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://broskiv2.github.io/WebApp-Miner')
+
+# Vérification du token
+if not TOKEN:
+    logger.error("TELEGRAM_TOKEN n'est pas défini!")
+else:
+    logger.info(f"Token trouvé: {TOKEN[:5]}...")
 
 # Variable globale pour l'application Telegram
 telegram_app = None
@@ -21,16 +35,28 @@ CORS(app)  # Activation de CORS pour permettre les requêtes depuis GitHub Pages
 
 def start_telegram_bot():
     """Démarrage du bot Telegram"""
-    global telegram_app
-    if telegram_app is None:
-        telegram_app = Application.builder().token(TOKEN).build()
-        telegram_app.add_handler(CommandHandler("start", start))
-        telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        global telegram_app
+        if telegram_app is None:
+            logger.info("Démarrage du bot Telegram...")
+            telegram_app = Application.builder().token(TOKEN).build()
+            telegram_app.add_handler(CommandHandler("start", start))
+            logger.info("Bot configuré, démarrage du polling...")
+            telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
+    except Exception as e:
+        logger.error(f"Erreur lors du démarrage du bot: {str(e)}")
+        raise
 
 # Route API pour le solde
 @app.route('/')
 def home():
-    return jsonify({"status": "Server is running"})
+    status = "Bot running" if telegram_app else "Bot not running"
+    token_status = "Token set" if TOKEN else "No token"
+    return jsonify({
+        "status": "Server is running",
+        "bot_status": status,
+        "token_status": token_status
+    })
 
 @app.route('/api/balance')
 def get_balance():
@@ -43,23 +69,49 @@ def get_balance():
 # Commandes du bot Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Commande de démarrage avec bouton pour ouvrir la webapp"""
-    keyboard = [[KeyboardButton(
-        text="Ouvrir le Miner",
-        web_app=WebAppInfo(url=WEBAPP_URL)
-    )]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(
-        "Bienvenue sur WeMine! Cliquez sur le bouton ci-dessous pour commencer:",
-        reply_markup=reply_markup
-    )
+    try:
+        logger.info(f"Commande /start reçue de {update.effective_user.id}")
+        keyboard = [[KeyboardButton(
+            text="Ouvrir le Miner",
+            web_app=WebAppInfo(url=WEBAPP_URL)
+        )]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        await update.message.reply_text(
+            "Bienvenue sur WeMine! Cliquez sur le bouton ci-dessous pour commencer:",
+            reply_markup=reply_markup
+        )
+        logger.info("Message de bienvenue envoyé avec succès")
+    except Exception as e:
+        logger.error(f"Erreur lors de la commande start: {str(e)}")
+        raise
+
+@app.route('/start-bot')
+def start_bot_endpoint():
+    """Endpoint pour démarrer manuellement le bot"""
+    try:
+        global bot_thread
+        if bot_thread is None or not bot_thread.is_alive():
+            logger.info("Démarrage manuel du bot...")
+            bot_thread = Thread(target=start_telegram_bot)
+            bot_thread.daemon = True
+            bot_thread.start()
+            return jsonify({"status": "Bot started", "success": True})
+        return jsonify({"status": "Bot already running", "success": True})
+    except Exception as e:
+        logger.error(f"Erreur lors du démarrage manuel du bot: {str(e)}")
+        return jsonify({"status": "Error starting bot", "error": str(e), "success": False})
 
 def create_app():
-    # Démarrage du bot dans un thread
-    global bot_thread
-    if bot_thread is None:
-        bot_thread = Thread(target=start_telegram_bot)
-        bot_thread.daemon = True
-        bot_thread.start()
+    try:
+        # Démarrage du bot dans un thread
+        global bot_thread
+        if bot_thread is None:
+            logger.info("Démarrage automatique du bot...")
+            bot_thread = Thread(target=start_telegram_bot)
+            bot_thread.daemon = True
+            bot_thread.start()
+    except Exception as e:
+        logger.error(f"Erreur lors de la création de l'application: {str(e)}")
     return app
 
 app = create_app()
