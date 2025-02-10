@@ -88,12 +88,12 @@ async def set_webhook():
     try:
         webhook_url = f"{BASE_URL}/webhook/{TOKEN}"
         
-        # Suppression de l'ancien webhook avec un timeout plus long
-        await bot.delete_webhook(timeout=30)
+        # Suppression de l'ancien webhook
+        await bot.delete_webhook()
         logger.info("Ancien webhook supprimé")
         
-        # Configuration du nouveau webhook avec un timeout plus long
-        await bot.set_webhook(webhook_url, timeout=30)
+        # Configuration du nouveau webhook
+        await bot.set_webhook(webhook_url)
         logger.info(f"Nouveau webhook configuré sur {webhook_url}")
         
         # Vérification de la configuration
@@ -138,7 +138,7 @@ async def reset_webhook():
     """Réinitialise complètement le webhook"""
     try:
         # Suppression du webhook existant
-        await bot.delete_webhook(drop_pending_updates=True, timeout=30)
+        await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Webhook supprimé avec succès")
         
         # Attente de 2 secondes
@@ -146,7 +146,7 @@ async def reset_webhook():
         
         # Configuration du nouveau webhook
         webhook_url = f"{BASE_URL}/webhook/{TOKEN}"
-        await bot.set_webhook(webhook_url, timeout=30)
+        await bot.set_webhook(webhook_url)
         logger.info(f"Nouveau webhook configuré sur {webhook_url}")
         
         # Vérification
