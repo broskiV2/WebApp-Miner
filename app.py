@@ -1,13 +1,10 @@
 import os
 import logging
-import asyncio
 from dotenv import load_dotenv
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from telegram import Update, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes
-from threading import Thread
-from functools import partial
 
 # Configuration des logs
 logging.basicConfig(
@@ -27,64 +24,12 @@ if not TOKEN:
 else:
     logger.info(f"Token trouvé: {TOKEN[:5]}...")
 
-# Variable globale pour l'application Telegram
-telegram_app = None
-bot_task = None
-
 # Initialisation de Flask
 app = Flask(__name__)
 CORS(app)  # Activation de CORS pour permettre les requêtes depuis GitHub Pages
 
-async def run_bot():
-    """Fonction pour exécuter le bot"""
-    global telegram_app
-    try:
-        telegram_app = Application.builder().token(TOKEN).build()
-        telegram_app.add_handler(CommandHandler("start", start))
-        await telegram_app.initialize()
-        await telegram_app.start()
-        await telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
-    except Exception as e:
-        logger.error(f"Erreur dans run_bot: {str(e)}")
-        raise
-
-def run_async_bot():
-    """Fonction pour démarrer le bot dans un thread séparé"""
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(run_bot())
-    except Exception as e:
-        logger.error(f"Erreur dans run_async_bot: {str(e)}")
-
-def start_bot():
-    """Démarrage du bot dans un thread"""
-    global bot_task
-    if bot_task is None or not bot_task.is_alive():
-        logger.info("Démarrage du bot Telegram...")
-        bot_task = Thread(target=run_async_bot)
-        bot_task.daemon = True
-        bot_task.start()
-        logger.info("Bot démarré avec succès")
-
-# Route API pour le solde
-@app.route('/')
-def home():
-    status = "Bot running" if telegram_app else "Bot not running"
-    token_status = "Token set" if TOKEN else "No token"
-    return jsonify({
-        "status": "Server is running",
-        "bot_status": status,
-        "token_status": token_status
-    })
-
-@app.route('/api/balance')
-def get_balance():
-    return jsonify({
-        'balance': 0.00000000,
-        'total_pull': 50000,
-        'rate': 0.01000000
-    })
+# Initialisation du bot Telegram
+telegram_app = Application.builder().token(TOKEN).build()
 
 # Commandes du bot Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,25 +50,49 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Erreur lors de la commande start: {str(e)}")
         raise
 
-@app.route('/start-bot')
-def start_bot_endpoint():
-    """Endpoint pour démarrer manuellement le bot"""
-    try:
-        start_bot()
-        return jsonify({"status": "Bot started", "success": True})
-    except Exception as e:
-        logger.error(f"Erreur lors du démarrage manuel du bot: {str(e)}")
-        return jsonify({"status": "Error starting bot", "error": str(e), "success": False})
+# Ajout des handlers
+telegram_app.add_handler(CommandHandler("start", start))
 
-def create_app():
+# Route pour le webhook Telegram
+@app.route(f'/{TOKEN}', methods=['POST'])
+async def webhook():
+    """Endpoint pour recevoir les mises à jour de Telegram"""
     try:
-        # Démarrage du bot
-        start_bot()
+        update = Update.de_json(request.get_json(), telegram_app.bot)
+        await telegram_app.process_update(update)
+        return 'OK'
     except Exception as e:
-        logger.error(f"Erreur lors de la création de l'application: {str(e)}")
-    return app
+        logger.error(f"Erreur dans le webhook: {str(e)}")
+        return 'Error', 500
 
-app = create_app()
+# Route pour configurer le webhook
+@app.route('/set-webhook')
+async def set_webhook():
+    """Configure le webhook pour le bot"""
+    try:
+        webhook_url = f"https://{request.host}/{TOKEN}"
+        await telegram_app.bot.set_webhook(webhook_url)
+        logger.info(f"Webhook configuré sur {webhook_url}")
+        return jsonify({"status": "Webhook set", "url": webhook_url})
+    except Exception as e:
+        logger.error(f"Erreur lors de la configuration du webhook: {str(e)}")
+        return jsonify({"status": "Error", "error": str(e)}), 500
+
+# Route API pour le solde
+@app.route('/')
+def home():
+    return jsonify({
+        "status": "Server is running",
+        "webhook_url": f"https://{request.host}/{TOKEN}"
+    })
+
+@app.route('/api/balance')
+def get_balance():
+    return jsonify({
+        'balance': 0.00000000,
+        'total_pull': 50000,
+        'rate': 0.01000000
+    })
 
 if __name__ == '__main__':
     # Démarrage du serveur Flask

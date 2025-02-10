@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WeMine - USDT Miner</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: white;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .card {
+            background: linear-gradient(145deg, #222222, #333333);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        .balance {
+            font-size: 2em;
+            text-align: center;
+            color: #4CAF50;
+            margin: 20px 0;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background-color: #444;
+            border-radius: 5px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress {
+            width: 0%;
+            height: 100%;
+            background-color: #4CAF50;
+            transition: width 0.3s ease;
+        }
+        .rate {
+            text-align: center;
+            color: #4CAF50;
+            margin: 10px 0;
+        }
+        .button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            width: 100%;
+            margin: 10px 0;
+            cursor: pointer;
+        }
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h2 style="text-align: center;">USDT Miner</h2>
+            <div class="balance">0.00000000</div>
+            <p style="text-align: center;">USDT Miner Total Pull</p>
+            <div class="progress-bar">
+                <div class="progress" id="progressBar"></div>
+            </div>
+            <div class="rate">0.01000000 USDT/d</div>
+        </div>
+        
+        <button class="button" onclick="startMining()">Start Mining</button>
+        
+        <div class="stats">
+            <div class="card" style="flex: 1; margin: 5px;">
+                <h3>Total Mined</h3>
+                <p id="totalMined">0.00000000</p>
+            </div>
+            <div class="card" style="flex: 1; margin: 5px;">
+                <h3>Mining Rate</h3>
+                <p id="miningRate">0.01000000/day</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let tg = window.Telegram.WebApp;
+        tg.expand();
+        
+        function updateBalance() {
+            fetch('/api/balance')
+                .then(response => response.json())
+                .then(data => {
+                    document.querySelector('.balance').textContent = data.balance.toFixed(8);
+                    const progress = (data.balance / data.total_pull) * 100;
+                    document.getElementById('progressBar').style.width = `${progress}%`;
+                    document.getElementById('miningRate').textContent = `${data.rate.toFixed(8)}/day`;
+                });
+        }
+
+        function startMining() {
+            tg.showAlert('Mining started! Check back later for your rewards.');
+        }
+
+        // Update balance every 5 seconds
+        setInterval(updateBalance, 5000);
+        updateBalance();
+    </script>
+</body>
+</html> 
