@@ -5,7 +5,9 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from telegram import Update, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.request import HTTPXRequest
 import json
+import asyncio
 
 # Configuration des logs
 logging.basicConfig(
@@ -30,9 +32,12 @@ else:
 app = Flask(__name__)
 CORS(app)  # Activation de CORS pour permettre les requêtes depuis GitHub Pages
 
-# Initialisation du bot Telegram
-bot = Bot(token=TOKEN)
-telegram_app = Application.builder().token(TOKEN).build()
+# Configuration du request pour le bot avec un pool plus grand
+request = HTTPXRequest(connection_pool_size=8)
+
+# Initialisation du bot Telegram avec le request configuré
+bot = Bot(token=TOKEN, request=request)
+telegram_app = Application.builder().token(TOKEN).request=request.build()
 
 # Commandes du bot Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -83,12 +88,12 @@ async def set_webhook():
     try:
         webhook_url = f"{BASE_URL}/webhook/{TOKEN}"
         
-        # Suppression de l'ancien webhook
-        await bot.delete_webhook()
+        # Suppression de l'ancien webhook avec un timeout plus long
+        await bot.delete_webhook(timeout=30)
         logger.info("Ancien webhook supprimé")
         
-        # Configuration du nouveau webhook
-        await bot.set_webhook(webhook_url)
+        # Configuration du nouveau webhook avec un timeout plus long
+        await bot.set_webhook(webhook_url, timeout=30)
         logger.info(f"Nouveau webhook configuré sur {webhook_url}")
         
         # Vérification de la configuration
@@ -127,6 +132,34 @@ async def bot_info():
         logger.error(f"Erreur lors de la vérification du bot: {str(e)}")
         return jsonify({"status": "Error", "error": str(e)}), 500
 
+# Route pour réinitialiser le webhook
+@app.route('/reset-webhook')
+async def reset_webhook():
+    """Réinitialise complètement le webhook"""
+    try:
+        # Suppression du webhook existant
+        await bot.delete_webhook(drop_pending_updates=True, timeout=30)
+        logger.info("Webhook supprimé avec succès")
+        
+        # Attente de 2 secondes
+        await asyncio.sleep(2)
+        
+        # Configuration du nouveau webhook
+        webhook_url = f"{BASE_URL}/webhook/{TOKEN}"
+        await bot.set_webhook(webhook_url, timeout=30)
+        logger.info(f"Nouveau webhook configuré sur {webhook_url}")
+        
+        # Vérification
+        webhook_info = await bot.get_webhook_info()
+        
+        return jsonify({
+            "status": "Webhook reset successful",
+            "webhook_info": webhook_info.to_dict()
+        })
+    except Exception as e:
+        logger.error(f"Erreur lors de la réinitialisation du webhook: {str(e)}")
+        return jsonify({"status": "Error", "error": str(e)}), 500
+
 # Route API pour le solde
 @app.route('/')
 def home():
@@ -134,6 +167,7 @@ def home():
         "status": "Server is running",
         "endpoints": {
             "webhook_setup": f"{BASE_URL}/set-webhook",
+            "webhook_reset": f"{BASE_URL}/reset-webhook",
             "bot_info": f"{BASE_URL}/bot-info",
             "balance_api": f"{BASE_URL}/api/balance"
         }
